@@ -17,6 +17,15 @@ _REPORT_HEADERS = re.compile(
     r"last\s+session|loading)\s*:",
     re.I | re.M,
 )
+_TEMPLATE_LABEL_BLOCK = re.compile(
+    r"\n\s*\*\*(?:Pattern|Cost|Failure\s+Strategy|Success\s+Strategy|"
+    r"Today'?s?\s+Green\s+Rep|Win\s+Condition)\s*:\*\*[\s\S]*$",
+    re.I,
+)
+_REP_REQUIRES_PERSON = re.compile(
+    r"\b(someone|person|trust|send\s+it|send\s+to|reach\s+out|friend|family|tell\s+them|text\s+them)\b",
+    re.I,
+)
 
 
 def _sanitize_user_facing(text: str | None) -> str:
@@ -24,6 +33,7 @@ def _sanitize_user_facing(text: str | None) -> str:
         return ""
     out = _REPORT_HEADERS.sub("", text)
     out = _FRAMEWORK_TERMS.sub("pattern", out)
+    out = _TEMPLATE_LABEL_BLOCK.sub("", out)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 STATE_LABELS = {
@@ -190,11 +200,17 @@ def _normalize_coach_response(
     state = str(checkin.get("current_state") or "")
     coaching_mode = str(checkin.get("coaching_mode") or "")
     execute_mode = coaching_mode == "execute"
+    conversation_signals = checkin.get("conversation_signals") or {}
 
     progress_mode = (
         state == "progress"
         or user_reported_proof
+        or session_phase.startswith("proof_integration")
+        or bool(checkin.get("proof_integration_mode"))
     )
+    awaiting_proof = bool(checkin.get("awaiting_proof_log"))
+    proof_integration = bool(checkin.get("proof_integration_mode"))
+    assign_green_rep_flag = bool(checkin.get("assign_green_rep"))
 
     green_rep = parsed.get("green_rep")
     hints = parsed.get("writeback_hints") or {}
@@ -210,16 +226,80 @@ def _normalize_coach_response(
             hints.pop("cl_estimate", None)
     assign_new = bool(hints.get("assign_new_green_rep"))
 
-    if execute_mode and not green_rep:
-        daily_rep = domain_map.get("daily_rep")
-        if isinstance(daily_rep, dict) and daily_rep.get("name"):
+    if execute_mode and not green_rep and assign_new:
+        solo_rep = (
+            conversation_signals.get("suggested_green_rep")
+            or conversation_signals.get("suggested_solo_rep")
+        )
+        if isinstance(solo_rep, dict) and solo_rep.get("name") and (
+            conversation_signals.get("needs_solo_rep_adaptation")
+            or conversation_signals.get("user_completed_current_rep")
+        ):
             green_rep = {
-                "name": daily_rep["name"],
-                "steps": daily_rep.get("steps") or [],
-                "win_condition": daily_rep.get("win_condition") or "",
+                "name": solo_rep["name"],
+                "steps": solo_rep.get("steps") or [],
+                "win_condition": solo_rep.get("win_condition") or "",
             }
             hints = {**hints, "assign_new_green_rep": True}
             assign_new = True
+        else:
+            daily_rep = domain_map.get("daily_rep")
+            if isinstance(daily_rep, dict) and daily_rep.get("name"):
+                green_rep = {
+                    "name": daily_rep["name"],
+                    "steps": daily_rep.get("steps") or [],
+                    "win_condition": daily_rep.get("win_condition") or "",
+                }
+                hints = {**hints, "assign_new_green_rep": True}
+                assign_new = True
+
+    if assign_new and not conversation_signals.get("block_rep_reassign"):
+        solo_rep = (
+            conversation_signals.get("suggested_green_rep")
+            or conversation_signals.get("suggested_solo_rep")
+        )
+        last_rep = str(checkin.get("last_green_rep") or "").lower()
+        if isinstance(solo_rep, dict) and solo_rep.get("name"):
+            next_name = str(solo_rep["name"]).lower()
+            if conversation_signals.get("user_completed_current_rep") and next_name != last_rep:
+                green_rep = {
+                    "name": solo_rep["name"],
+                    "steps": solo_rep.get("steps") or [],
+                    "win_condition": solo_rep.get("win_condition") or "",
+                }
+            elif conversation_signals.get("needs_solo_rep_adaptation"):
+                rep_text = json.dumps(green_rep or {})
+                if _REP_REQUIRES_PERSON.search(rep_text) or not green_rep:
+                    green_rep = {
+                        "name": solo_rep["name"],
+                        "steps": solo_rep.get("steps") or [],
+                        "win_condition": solo_rep.get("win_condition") or "",
+                    }
+
+    if conversation_signals.get("block_rep_reassign"):
+        green_rep = None
+        hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
+        assign_new = False
+
+    if awaiting_proof or proof_integration or not assign_green_rep_flag:
+        green_rep = None
+        hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
+        assign_new = False
+
+    if bool(checkin.get("reports_stagnation")) or bool(
+        (checkin.get("conversation_signals") or {}).get("coaching_repeat_complaint")
+    ):
+        green_rep = None
+        hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
+        assign_new = False
+
+    if bool(checkin.get("suggest_session_end")):
+        green_rep = None
+        hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
+        assign_new = False
+
+    if bool(checkin.get("returning_member") or checkin.get("do_not_reintroduce")):
+        hints = {**hints, "returning_member": True}
 
     if not assign_new and not green_rep:
         green_rep = None
