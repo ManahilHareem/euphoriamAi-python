@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.services.coach import coach_reply, friction_rescue
@@ -21,16 +21,19 @@ class CoachReplyRequest(BaseModel):
 
 @router.post("/reply")
 def post_coach_reply(body: CoachReplyRequest):
-    result = coach_reply(
-        domain_map=body.domain_map,
-        checkin=body.checkin,
-        messages=body.messages,
-        user_message=body.user_message,
-        prompts=body.prompts,
-        active_goal_context=body.active_goal_context,
-        user_coach_context=body.user_coach_context,
-    )
-    return result
+    try:
+        result = coach_reply(
+            domain_map=body.domain_map,
+            checkin=body.checkin,
+            messages=body.messages,
+            user_message=body.user_message,
+            prompts=body.prompts,
+            active_goal_context=body.active_goal_context,
+            user_coach_context=body.user_coach_context,
+        )
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 class FrictionRequest(BaseModel):

@@ -11,6 +11,8 @@ from app.services.prompts import (
     _COACH_HUMAN_TONE_RULES,
     _COACH_PROOF_INTEGRATION_RULES,
     _COACH_SESSION_PHASE_RULES,
+    _COACH_WHAT_NEXT_RULES,
+    _COACH_EVIDENCE_RULES,
     missing_prompt_notice,
 )
 
@@ -36,6 +38,8 @@ def compose_coach_system(prompts: dict | None) -> str:
     parts: list[str] = [
         _COACH_HUMAN_TONE_RULES,
         _COACH_DIRECTIVE_PROGRESSION_RULES,
+        _COACH_EVIDENCE_RULES,
+        _COACH_WHAT_NEXT_RULES,
         _COACH_BARRIER_AND_LOOP_RULES,
         _COACH_PROOF_INTEGRATION_RULES,
         _COACH_SESSION_PHASE_RULES,
