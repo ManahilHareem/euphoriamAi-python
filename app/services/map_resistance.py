@@ -19,6 +19,30 @@ One question at a time. Every question stays anchored to this goal.
 **Q1 — Resistance when pursuing this goal**
 When you move toward "{goal}", what do you usually do instead, avoid, or tell yourself first that slows you down?"""
 
+# Internal framework codes must never reach the member — expand to full words if the model leaks them.
+_CODE_FULL_FORMS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bEO\b"), "core belief pattern"),
+    (re.compile(r"\bNE\b"), "Not Enough"),
+    (re.compile(r"\bNC\b"), "Not Capable"),
+    (re.compile(r"\bNS\b"), "Not Safe"),
+    (re.compile(r"\bPL\b"), "Powerless"),
+    (re.compile(r"\bCD\b"), "Can't Depend"),
+    (re.compile(r"\bNON\b"), "Needs Not OK"),
+    (re.compile(r"\bNOV\b"), "Vulnerable Not OK"),
+    (re.compile(r"\bNOH\b"), "Happy/Comfort Not OK"),
+]
+
+
+def _expand_framework_codes(text: str) -> str:
+    """Replace leaked uppercase framework codes (EO, NE, PL, …) with full human words."""
+    if not text:
+        return text
+    out = text
+    for pattern, full in _CODE_FULL_FORMS:
+        out = pattern.sub(full, out)
+    return out
+
+
 _FALLBACK_TOPICS: list[tuple[str, str]] = [
     ("Body and breath", 'When you imagine taking the next visible step on "{goal}", what do you notice first in your body, breath, or energy?'),
     ("Protector voice", 'What inner voice or story shows up to talk you out of moving on "{goal}"?'),
@@ -424,6 +448,7 @@ def map_resistance_turn(
         last_user=last_user_text,
         prompts=prompts,
     )
+    content = _expand_framework_codes(content)
 
     if not last_answer_valid and content:
         content = re.sub(r"\*\*Q\d+\b", f"**Q{next_q}", content, count=1, flags=re.I)

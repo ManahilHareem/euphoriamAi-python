@@ -28,6 +28,7 @@ When the user's reply was INVALID, gibberish, or too short:
 
 Other rules:
 - Anchor every question to the user's specific goal in ACTIVE_GOAL_CONTEXT.
+- Write every question in plain everyday language. NEVER use internal framework codes or abbreviations in assistant_message: no EO, NE, NC, NS, PL, CD, NON, NOV, NOH, QGC, CL, C/S/P, F/R, vortex, lack channel, protector, or signature IDs like "NE+S+R". If a concept is needed, spell it out in full human words (e.g. "feeling like you're not enough", never "NE"; "feeling powerless", never "PL").
 - When re-asking the same Q, rephrase the body — never copy-paste the prior wording.
 - When advancing to a new Q, do not repeat a prior assistant question verbatim.
 - When answered_count >= target_count, acknowledge completion briefly — do not ask another intake question. Set finalize_ready true.
