@@ -177,7 +177,7 @@ def friction_rescue(
         parsed = chat_json(system, payload)
         if parsed.get("assistant_message"):
             return {
-                "assistant_message": parsed["assistant_message"],
+                "assistant_message": _sanitize_user_facing(parsed["assistant_message"]),
                 "green_rep": parsed.get("green_rep"),
             }
     except Exception:
@@ -188,7 +188,7 @@ def friction_rescue(
         [{"role": m["role"], "content": m["content"]} for m in messages],
         model=None,
     )
-    return {"assistant_message": text, "green_rep": None}
+    return {"assistant_message": _sanitize_user_facing(text), "green_rep": None}
 
 
 def _normalize_coach_response(
@@ -211,6 +211,13 @@ def _normalize_coach_response(
     awaiting_proof = bool(checkin.get("awaiting_proof_log"))
     proof_integration = bool(checkin.get("proof_integration_mode"))
     assign_green_rep_flag = bool(checkin.get("assign_green_rep"))
+    intake_phase = session_phase in {
+        "intention",
+        "emotional_checkin",
+        "resistance_probe",
+    }
+    awaiting_intention = bool(checkin.get("awaiting_session_intention"))
+    awaiting_emotional = bool(checkin.get("awaiting_emotional_checkin"))
 
     green_rep = parsed.get("green_rep")
     hints = parsed.get("writeback_hints") or {}
@@ -285,6 +292,16 @@ def _normalize_coach_response(
         green_rep = None
         hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
         assign_new = False
+
+    if intake_phase or awaiting_intention or awaiting_emotional:
+        green_rep = None
+        hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
+        assign_new = False
+
+    if checkin.get("session_intention") and not hints.get("session_intention"):
+        hints["session_intention"] = checkin.get("session_intention")
+    if checkin.get("felt_sensation") and not hints.get("felt_sensation"):
+        hints["felt_sensation"] = checkin.get("felt_sensation")
 
     if bool(checkin.get("reports_stagnation")) or bool(
         (checkin.get("conversation_signals") or {}).get("coaching_repeat_complaint")

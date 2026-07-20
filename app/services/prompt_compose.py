@@ -13,6 +13,10 @@ from app.services.prompts import (
     _COACH_SESSION_PHASE_RULES,
     _COACH_WHAT_NEXT_RULES,
     _COACH_EVIDENCE_RULES,
+    _SESSION_INTAKE_RULES,
+    _EMOTIONAL_CHECKIN_RULES,
+    _RESISTANCE_PROBE_RULES,
+    _REFRAME_TOOLKIT,
     missing_prompt_notice,
 )
 
@@ -43,6 +47,10 @@ def compose_coach_system(prompts: dict | None) -> str:
         _COACH_BARRIER_AND_LOOP_RULES,
         _COACH_PROOF_INTEGRATION_RULES,
         _COACH_SESSION_PHASE_RULES,
+        _SESSION_INTAKE_RULES,
+        _EMOTIONAL_CHECKIN_RULES,
+        _RESISTANCE_PROBE_RULES,
+        _REFRAME_TOOLKIT,
         _COACH_CONTEXT_RULES,
     ]
     missing: list[str] = []
@@ -64,6 +72,12 @@ def compose_coach_system(prompts: dict | None) -> str:
 
     if prompts.get("stage1_daily_coach"):
         parts.append(_section("DAILY COACH (admin overlay)", prompts["stage1_daily_coach"]))
+
+    if prompts.get("stage1_coach_opening"):
+        parts.append(_section("COACH OPENING (admin overlay)", prompts["stage1_coach_opening"]))
+
+    if prompts.get("stage1_goal_intake"):
+        parts.append(_section("GOAL INTAKE (admin overlay)", prompts["stage1_goal_intake"]))
 
     if missing:
         parts.append(missing_prompt_notice(*missing))
