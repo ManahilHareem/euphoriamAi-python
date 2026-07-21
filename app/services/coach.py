@@ -4,6 +4,7 @@ import json
 
 import re
 
+from app.config import merge_feature_flags
 from app.services.llm import chat_json, chat_text
 from app.services.prompt_compose import compose_coach_system, compose_friction_system
 
@@ -61,6 +62,8 @@ def _build_coach_user_payload(
     }
     if active_goal_context:
         payload["ACTIVE_GOAL_CONTEXT"] = active_goal_context
+    if checkin.get("state_vector_v2"):
+        payload["STATE_VECTOR_V2"] = checkin["state_vector_v2"]
     if user_coach_context:
         payload["USER_COACH_CONTEXT"] = user_coach_context
         if user_coach_context.get("COACH_MEMORY_CONTEXT"):
@@ -77,6 +80,7 @@ def coach_reply(
     prompts: dict | None = None,
     active_goal_context: dict | None = None,
     user_coach_context: dict | None = None,
+    feature_flags: dict | None = None,
 ) -> dict:
     messages = messages or []
     state = checkin.get("current_state") or checkin.get("state") or "clear"
@@ -89,7 +93,9 @@ def coach_reply(
     if user_message:
         messages = [*messages, {"role": "user", "content": user_message}]
 
-    system = compose_coach_system(prompts)
+    flags = merge_feature_flags(feature_flags or (prompts or {}).get("feature_flags"))
+    prompts_with_flags = {**(prompts or {}), "feature_flags": flags}
+    system = compose_coach_system(prompts_with_flags, feature_flags=flags)
     try:
         parsed = chat_json(
             system,
@@ -215,6 +221,8 @@ def _normalize_coach_response(
         "intention",
         "emotional_checkin",
         "resistance_probe",
+        "deep_probe",
+        "integration_deep",
     }
     awaiting_intention = bool(checkin.get("awaiting_session_intention"))
     awaiting_emotional = bool(checkin.get("awaiting_emotional_checkin"))

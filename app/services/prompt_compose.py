@@ -5,18 +5,21 @@ from app.services.prompts import (
     FRICTION_RESCUE_RULES,
     MAP_RESISTANCE_EXTRACT_RULES,
     MAP_RESISTANCE_TURN_RULES,
+    _CERT_DEEP_PROBE_RULES,
     _COACH_BARRIER_AND_LOOP_RULES,
     _COACH_CONTEXT_RULES,
     _COACH_DIRECTIVE_PROGRESSION_RULES,
     _COACH_HUMAN_TONE_RULES,
     _COACH_PROOF_INTEGRATION_RULES,
     _COACH_SESSION_PHASE_RULES,
+    _COACH_V2_RULES,
     _COACH_WHAT_NEXT_RULES,
     _COACH_EVIDENCE_RULES,
-    _SESSION_INTAKE_RULES,
     _EMOTIONAL_CHECKIN_RULES,
-    _RESISTANCE_PROBE_RULES,
+    _INTEGRATION_DEEP_RULES,
     _REFRAME_TOOLKIT,
+    _RESISTANCE_PROBE_RULES,
+    _SESSION_INTAKE_RULES,
     missing_prompt_notice,
 )
 
@@ -37,8 +40,9 @@ def _truncate(body: str, max_chars: int = _MAX_TURN_SECTION_CHARS) -> str:
     )
 
 
-def compose_coach_system(prompts: dict | None) -> str:
+def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = None) -> str:
     prompts = prompts or {}
+    flags = feature_flags or prompts.get("feature_flags") or {}
     parts: list[str] = [
         _COACH_HUMAN_TONE_RULES,
         _COACH_DIRECTIVE_PROGRESSION_RULES,
@@ -53,6 +57,12 @@ def compose_coach_system(prompts: dict | None) -> str:
         _REFRAME_TOOLKIT,
         _COACH_CONTEXT_RULES,
     ]
+
+    if flags.get("coach_cert_deep_enabled"):
+        parts.extend([_CERT_DEEP_PROBE_RULES, _INTEGRATION_DEEP_RULES])
+
+    if flags.get("brain_prompt_v2_shadow"):
+        parts.append(_COACH_V2_RULES)
     missing: list[str] = []
 
     if prompts.get("coach_brain_prompt"):
@@ -78,6 +88,9 @@ def compose_coach_system(prompts: dict | None) -> str:
 
     if prompts.get("stage1_goal_intake"):
         parts.append(_section("GOAL INTAKE (admin overlay)", prompts["stage1_goal_intake"]))
+
+    if prompts.get("coach_v2"):
+        parts.append(_section("COACH V2 (admin overlay)", prompts["coach_v2"]))
 
     if missing:
         parts.append(missing_prompt_notice(*missing))

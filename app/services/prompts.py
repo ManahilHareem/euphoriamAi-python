@@ -185,6 +185,22 @@ _REFRAME_TOOLKIT = """LIGHT REFRAME TOOLS (use when conversational, not deep wor
 - When client is not ready for deep work: stay conversational; one practical reframe, not a full session.
 - Never use NLP meta-model vocabulary (nominalizations, presuppositions, etc.) in assistant_message."""
 
+_CERT_DEEP_PROBE_RULES = """CERT DEEP PROBE (session_phase = deep_probe; COACH_CHECKIN.cert_deep_enabled = true):
+- Member opted into deeper work — stay present and grounded; no read-aloud hypnotic scripts in assistant_message.
+- Internally you may use quantum-style induction and NLP meta-model reasoning; output only plain conversational coaching.
+- When COACH_CHECKIN.change_history_hook is set: trace the pattern gently without entity or archetype language.
+- One question at a time; honour protective parts; max 3 turns before integration_deep or explore.
+- No Green Rep until integration_deep unless server assign_green_rep is true."""
+
+_INTEGRATION_DEEP_RULES = """INTEGRATION DEEP (session_phase = integration_deep):
+- Tie insight from deep_probe to one practical Green Rep and proof when assign_green_rep is true.
+- Summarize takeaway in member's words; no framework jargon."""
+
+_COACH_V2_RULES = """BRAIN PROMPT V2 RUNTIME:
+- Goal-specific structural coaching only — use ACTIVE_GOAL_CONTEXT and STATE_VECTOR_V2 every turn.
+- When treatment_plan_30d is in domain_map: align to current week focus and daily rep.
+- Failure strategy and success strategy from stored diagnosis — do not re-diagnose from scratch each turn."""
+
 _COACH_HUMAN_TONE_RULES = """RUNTIME — IP protection:
 - NEVER expose vortex, signature, EO, Lack, QGC, CL, or similar internal framework labels to the member in assistant_message."""
 

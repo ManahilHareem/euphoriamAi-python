@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import coach, extraction, lead_email, map_resistance, member_email
+from app.routers import coach, extraction, lead_email, map_resistance, member_email, treatment_plan
 
 # UptimeRobot and similar monitors use HEAD; no auth on these paths.
 PUBLIC_MONITOR_PATHS = {"/", "/health"}
@@ -48,6 +48,7 @@ def health_head():
 
 
 app.include_router(coach.router)
+app.include_router(treatment_plan.router)
 app.include_router(map_resistance.router)
 app.include_router(extraction.router)
 app.include_router(member_email.router)

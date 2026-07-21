@@ -1,0 +1,22 @@
+[
+  {
+    "id": "delay_refinement",
+    "name": "Delay disguised as refinement",
+    "success_pair": "Move first. Refine second."
+  },
+  {
+    "id": "financial_invisibility",
+    "name": "Staying financially invisible",
+    "success_pair": "State the number cleanly and tolerate judgement."
+  },
+  {
+    "id": "waiting_certainty",
+    "name": "Waiting for certainty",
+    "success_pair": "Choose next visible step before certainty."
+  },
+  {
+    "id": "people_pleasing",
+    "name": "People-pleasing",
+    "success_pair": "Tell the truth cleanly and stay present."
+  }
+]
