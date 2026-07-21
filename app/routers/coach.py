@@ -19,6 +19,7 @@ class CoachReplyRequest(BaseModel):
     user_message: str | None = None
     prompts: dict | None = None
     prompts_cache_key: str | None = None
+    feature_flags: dict | None = None
 
 
 def _resolve_request_prompts(body) -> dict | None:
@@ -42,6 +43,7 @@ def post_coach_reply(body: CoachReplyRequest):
             prompts=prompts,
             active_goal_context=body.active_goal_context,
             user_coach_context=body.user_coach_context,
+            feature_flags=body.feature_flags,
         )
         return result
     except HTTPException:

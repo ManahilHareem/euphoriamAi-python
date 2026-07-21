@@ -33,6 +33,19 @@ class CoachIntakePhaseTests(unittest.TestCase):
         result = _normalize_coach_response(parsed, {}, checkin)
         self.assertIsNone(result["green_rep"])
 
+    def test_deep_probe_blocks_green_rep(self):
+        parsed = {
+            "assistant_message": "Stay with that sensation.",
+            "green_rep": {"name": "Rep", "steps": [], "win_condition": "Done"},
+            "writeback_hints": {"assign_new_green_rep": True},
+        }
+        checkin = {
+            "session_phase": "deep_probe",
+            "assign_green_rep": True,
+        }
+        result = _normalize_coach_response(parsed, {}, checkin)
+        self.assertIsNone(result["green_rep"])
+
     def test_yes_man_pattern_does_not_force_green_rep(self):
         parsed = {
             "assistant_message": "What would happen if you said no once this week?",
