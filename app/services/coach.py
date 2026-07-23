@@ -53,6 +53,68 @@ _REP_REQUIRES_PERSON = re.compile(
     r"\b(someone|person|trust|send\s+it|send\s+to|reach\s+out|friend|family|tell\s+them|text\s+them)\b",
     re.I,
 )
+_EXECUTION_COMMIT_USER = re.compile(
+    r"\b(let me do|i'?ll do|i will do|on it|going to do|sounds good|got it)\b",
+    re.I,
+)
+
+
+def _token_overlap_ratio(a: str, b: str) -> float:
+    ta = {w for w in re.findall(r"[a-z0-9']+", (a or "").lower()) if len(w) > 2}
+    tb = {w for w in re.findall(r"[a-z0-9']+", (b or "").lower()) if len(w) > 2}
+    if not ta or not tb:
+        return 1.0 if (a or "").strip() == (b or "").strip() and (a or "").strip() else 0.0
+    return len(ta & tb) / max(len(ta), len(tb))
+
+
+def _last_assistant_content(messages: list[dict]) -> str:
+    for m in reversed(messages or []):
+        if m.get("role") == "assistant" and m.get("content"):
+            return str(m["content"])
+    return ""
+
+
+def _brief_execution_ack(user_message: str | None = None) -> str:
+    if user_message and _EXECUTION_COMMIT_USER.search(user_message):
+        return "Good — go do it. When you're done, come back and tell me what happened."
+    return "Got it — take that step and tell me how it goes when you're done."
+
+
+def _replace_duplicate_assistant_reply(
+    result: dict,
+    *,
+    messages: list[dict],
+    user_message: str | None,
+    checkin: dict,
+) -> dict:
+    assistant = str(result.get("assistant_message") or "").strip()
+    if not assistant:
+        return result
+    prior = _last_assistant_content(
+        messages[:-1] if user_message else messages
+    )
+    if not prior:
+        return result
+    overlap = _token_overlap_ratio(assistant, prior)
+    conv_sig = checkin.get("conversation_signals") or {}
+    execution_commit = bool(
+        conv_sig.get("user_commitment_to_act")
+        or conv_sig.get("execution_confirmed")
+        or checkin.get("execution_confirmed")
+        or (user_message and _EXECUTION_COMMIT_USER.search(user_message))
+    )
+    if overlap >= 0.45 or (prior.strip() == assistant.strip()):
+        if execution_commit or overlap >= 0.85:
+            result = {
+                **result,
+                "assistant_message": _sanitize_user_facing(_brief_execution_ack(user_message)),
+                "green_rep": None,
+                "writeback_hints": {
+                    **(result.get("writeback_hints") or {}),
+                    "assign_new_green_rep": False,
+                },
+            }
+    return result
 
 
 def _sanitize_user_facing(text: str | None) -> str:
@@ -169,6 +231,12 @@ def coach_reply(
         or checkin.get("assistant_advice_loop")
         or checkin.get("repeated_assistant_advice")
     )
+    execution_commit = bool(
+        conv_sig.get("user_commitment_to_act")
+        or conv_sig.get("execution_confirmed")
+        or checkin.get("execution_confirmed")
+        or (user_message and _EXECUTION_COMMIT_USER.search(str(user_message)))
+    )
     # The member explicitly asking "how / what steps / how do I do it" is the
     # strongest signal they want a concrete action, not another generic tip. Fire
     # the override here too so we never answer a "how?" with recycled advice.
@@ -183,7 +251,7 @@ def coach_reply(
         "integration",
         "integration_deep",
     } or bool(checkin.get("awaiting_proof_log") or checkin.get("proof_integration_mode"))
-    apply_override = (loop_detected or asked_how) and not intake_or_proof
+    apply_override = (loop_detected or asked_how or execution_commit) and not intake_or_proof
     last_assistant = ""
     for _m in reversed(messages[:-1] if user_message else messages):
         if _m.get("role") == "assistant" and _m.get("content"):
@@ -199,25 +267,35 @@ def coach_reply(
         user_coach_context=user_coach_context,
     )
     if apply_override:
-        user_payload += (
-            "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
-            "Your recent replies repeated the SAME advice and the member is frustrated and "
-            "is literally asking HOW to do it.\n"
-            "This turn you are FORBIDDEN from repeating that advice or its themes: optimizing or "
-            "sending proposals, increasing profile views, sharing the profile on social media / "
-            "forums, or any generic 'boost visibility' tip.\n"
-            "Do NOT restate the goal or milestone. Do NOT open with 'Let's focus on'. Do NOT end "
-            "with 'How does that sound?'.\n"
-            "You MUST do EXACTLY ONE of the following:\n"
-            "  (A) Give a concrete, step-by-step micro-action they can finish in the next 10 "
-            "minutes — numbered 1., 2., 3. — with real specifics (the exact words to write, the "
-            "exact place to go, the exact number to send/do).\n"
-            "  (B) Ask ONE sharp diagnostic question about the exact thing blocking them that you "
-            "have NOT already asked.\n"
-            "Keep it under 5 sentences. Be specific, human, and new.\n"
-            f'Advice already given (DO NOT repeat this): "{last_assistant[:300]}"\n'
-            "==========================================================================\n"
-        )
+        if execution_commit and not loop_detected and not asked_how:
+            user_payload += (
+                "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
+                "The member just AGREED to execute the plan you already gave (e.g. 'let me do it').\n"
+                "Reply in 1-2 sentences ONLY: brief acknowledgment + optional invite to report back.\n"
+                "You are FORBIDDEN from repeating the plan, numbered steps, body-echo opening, or goal recap.\n"
+                f'Plan already given (DO NOT repeat): "{last_assistant[:400]}"\n'
+                "==========================================================================\n"
+            )
+        else:
+            user_payload += (
+                "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
+                "Your recent replies repeated the SAME advice and the member is frustrated and "
+                "is literally asking HOW to do it.\n"
+                "This turn you are FORBIDDEN from repeating that advice or its themes: optimizing or "
+                "sending proposals, increasing profile views, sharing the profile on social media / "
+                "forums, or any generic 'boost visibility' tip.\n"
+                "Do NOT restate the goal or milestone. Do NOT open with 'Let's focus on'. Do NOT end "
+                "with 'How does that sound?'.\n"
+                "You MUST do EXACTLY ONE of the following:\n"
+                "  (A) Give a concrete, step-by-step micro-action they can finish in the next 10 "
+                "minutes — numbered 1., 2., 3. — with real specifics (the exact words to write, the "
+                "exact place to go, the exact number to send/do).\n"
+                "  (B) Ask ONE sharp diagnostic question about the exact thing blocking them that you "
+                "have NOT already asked.\n"
+                "Keep it under 5 sentences. Be specific, human, and new.\n"
+                f'Advice already given (DO NOT repeat this): "{last_assistant[:300]}"\n'
+                "==========================================================================\n"
+            )
 
     try:
         parsed = chat_json(system, user_payload)
@@ -237,7 +315,13 @@ def coach_reply(
         )
         # #endregion
         if parsed.get("assistant_message"):
-            return _normalize_coach_response(parsed, domain_map, checkin)
+            normalized = _normalize_coach_response(parsed, domain_map, checkin)
+            return _replace_duplicate_assistant_reply(
+                normalized,
+                messages=messages,
+                user_message=user_message,
+                checkin=checkin,
+            )
     except Exception as _e:
         # #region agent log
         _dbg(
@@ -360,6 +444,7 @@ def _normalize_coach_response(
         "deep_probe",
         "integration_deep",
     }
+    insight_integration = session_phase == "insight_integration"
     awaiting_intention = bool(checkin.get("awaiting_session_intention"))
     awaiting_emotional = bool(checkin.get("awaiting_emotional_checkin"))
 
@@ -441,6 +526,9 @@ def _normalize_coach_response(
         green_rep = None
         hints = {k: v for k, v in hints.items() if k != "assign_new_green_rep"}
         assign_new = False
+
+    if insight_integration and assign_green_rep_flag:
+        assign_new = bool(hints.get("assign_new_green_rep")) or assign_new
 
     if checkin.get("session_intention") and not hints.get("session_intention"):
         hints["session_intention"] = checkin.get("session_intention")
