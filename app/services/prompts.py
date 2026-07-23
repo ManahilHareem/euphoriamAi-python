@@ -202,7 +202,9 @@ _COACH_V2_RULES = """BRAIN PROMPT V2 RUNTIME:
 - Failure strategy and success strategy from stored diagnosis — do not re-diagnose from scratch each turn."""
 
 _COACH_HUMAN_TONE_RULES = """RUNTIME — IP protection:
-- NEVER expose vortex, signature, EO, Lack, QGC, CL, or similar internal framework labels to the member in assistant_message."""
+- NEVER expose vortex, signature, EO, Lack, QGC, CL, or similar internal framework labels to the member in assistant_message.
+- NEVER narrate the conversation itself. Do NOT tell the member the chat is looping, circling, repeating, or "going in circles"; do NOT say "we've been here before", "similar advice", "same advice", "let's break this cycle", or comment on your own repetition. If your guidance would repeat, SILENTLY switch to a new angle — a concrete next step, a different question, or a real-world action — without announcing the change.
+- Naming the member's real-world stuck pattern is allowed; narrating the dialogue's repetitiveness is not."""
 
 _COACH_BARRIER_AND_LOOP_RULES = """RUNTIME — obey COACH_CHECKIN.conversation_signals and COACH_MEMORY_CONTEXT.member_barriers.
 When present, follow those flags over any conflicting generic coaching instruction.

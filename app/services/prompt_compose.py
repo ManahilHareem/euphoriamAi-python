@@ -70,7 +70,18 @@ def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = N
     else:
         missing.append("Coach Brain Prompt")
 
-    if prompts.get("brain_prompt"):
+    rag_chunks = prompts.get("brain_prompt_rag_chunks") or []
+    if rag_chunks:
+        formatted = "\n\n---\n\n".join(
+            f"[{c.get('title', 'chunk')}]\n{c.get('chunk', '')}" for c in rag_chunks if c.get("chunk")
+        )
+        parts.append(
+            _section(
+                "BRAIN LIBRARY (retrieved for this member + turn — use internally; plain language to member)",
+                formatted,
+            )
+        )
+    elif prompts.get("brain_prompt"):
         parts.append(
             _section(
                 "BRAIN PROMPT (Canonical library — signatures, reps, UC routing)",
