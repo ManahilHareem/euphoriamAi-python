@@ -8,6 +8,32 @@ from app.config import merge_feature_flags
 from app.services.llm import chat_json, chat_text
 from app.services.prompt_compose import compose_coach_system, compose_friction_system
 
+
+# #region agent log
+def _dbg(location, message, data, hyp):
+    try:
+        import urllib.request as _u
+        import json as _j
+        import time as _t
+
+        _payload = {
+            "sessionId": "cbefd4",
+            "hypothesisId": hyp,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(_t.time() * 1000),
+        }
+        _r = _u.Request(
+            "http://host.docker.internal:7276/ingest/a6c3c50f-2380-49c9-8118-307947533aae",
+            data=_j.dumps(_payload).encode(),
+            headers={"Content-Type": "application/json", "X-Debug-Session-Id": "cbefd4"},
+        )
+        _u.urlopen(_r, timeout=1)
+    except Exception:
+        pass
+# #endregion
+
 _FRAMEWORK_TERMS = re.compile(
     r"\b(vortex|signature\s*id|EO\b|lack\s*channel|avoidance\s*channel|QGC|CL\s*estimate|"
     r"consciousness\s*level|gravity\s*depth|orbit\s*pattern|abducted\s*by\s*vortex)\b",
@@ -96,21 +122,131 @@ def coach_reply(
     flags = merge_feature_flags(feature_flags or (prompts or {}).get("feature_flags"))
     prompts_with_flags = {**(prompts or {}), "feature_flags": flags}
     system = compose_coach_system(prompts_with_flags, feature_flags=flags)
-    try:
-        parsed = chat_json(
-            system,
-            _build_coach_user_payload(
-                domain_map,
-                checkin,
-                messages,
-                user_message,
-                active_goal_context=active_goal_context,
-                user_coach_context=user_coach_context,
-            ),
+
+    # #region agent log
+    _p = prompts or {}
+    _cb = _p.get("coach_brain_prompt") or ""
+    _bp = _p.get("brain_prompt") or ""
+    _sys_l = system.lower()
+    _cs = checkin or {}
+    _sig = _cs.get("conversation_signals") or {}
+    _dbg(
+        "coach.py:coach_reply:compose",
+        "composed coach system prompt + flags + db prompts",
+        {
+            "cert_deep": bool(flags.get("coach_cert_deep_enabled")),
+            "brain_v2": bool(flags.get("brain_prompt_v2_shadow")),
+            "treatment_plan": bool(flags.get("treatment_plan_enabled")),
+            "coach_brain_len": len(_cb),
+            "coach_brain_head": _cb[:150],
+            "brain_len": len(_bp),
+            "brain_head": _bp[:150],
+            "prompt_keys_present": [k for k, v in _p.items() if v and k != "feature_flags"],
+            "system_len": len(system),
+            "has_missing_notice": "not configured in the database" in _sys_l
+            or "missing" in _sys_l and "prompt" in _sys_l,
+            "system_mentions_intention": "intention" in _sys_l,
+            "system_mentions_resistance": "resistance" in _sys_l,
+            "session_phase": str(_cs.get("session_phase") or ""),
+            "coaching_mode": str(_cs.get("coaching_mode") or ""),
+            "execution_confirmed": bool(_sig.get("execution_confirmed")),
+            "clarity_saturation": bool(_sig.get("clarity_saturation")),
+            "repeat_complaint": bool(_sig.get("coaching_repeat_complaint")),
+            "msg_count": len(messages),
+        },
+        "H6-H9",
+    )
+    # #endregion
+
+    # When the backend has already detected that recent advice is repeating, the
+    # tiny per-turn steering directive buried in the 110K system prompt is being
+    # ignored by the model. Append a blunt, high-recency override at the END of
+    # the user payload (the last tokens the model reads) so it CANNOT be missed.
+    conv_sig = checkin.get("conversation_signals") or {}
+    loop_detected = bool(
+        conv_sig.get("assistant_advice_loop")
+        or conv_sig.get("repeated_assistant_advice")
+        or checkin.get("assistant_advice_loop")
+        or checkin.get("repeated_assistant_advice")
+    )
+    # The member explicitly asking "how / what steps / how do I do it" is the
+    # strongest signal they want a concrete action, not another generic tip. Fire
+    # the override here too so we never answer a "how?" with recycled advice.
+    asked_how = bool(
+        conv_sig.get("user_asked_what_next") or checkin.get("user_asked_what_next")
+    )
+    intake_or_proof = str(checkin.get("session_phase") or "") in {
+        "intention",
+        "emotional_checkin",
+        "resistance_probe",
+        "deep_probe",
+        "integration",
+        "integration_deep",
+    } or bool(checkin.get("awaiting_proof_log") or checkin.get("proof_integration_mode"))
+    apply_override = (loop_detected or asked_how) and not intake_or_proof
+    last_assistant = ""
+    for _m in reversed(messages[:-1] if user_message else messages):
+        if _m.get("role") == "assistant" and _m.get("content"):
+            last_assistant = str(_m["content"])
+            break
+
+    user_payload = _build_coach_user_payload(
+        domain_map,
+        checkin,
+        messages,
+        user_message,
+        active_goal_context=active_goal_context,
+        user_coach_context=user_coach_context,
+    )
+    if apply_override:
+        user_payload += (
+            "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
+            "Your recent replies repeated the SAME advice and the member is frustrated and "
+            "is literally asking HOW to do it.\n"
+            "This turn you are FORBIDDEN from repeating that advice or its themes: optimizing or "
+            "sending proposals, increasing profile views, sharing the profile on social media / "
+            "forums, or any generic 'boost visibility' tip.\n"
+            "Do NOT restate the goal or milestone. Do NOT open with 'Let's focus on'. Do NOT end "
+            "with 'How does that sound?'.\n"
+            "You MUST do EXACTLY ONE of the following:\n"
+            "  (A) Give a concrete, step-by-step micro-action they can finish in the next 10 "
+            "minutes — numbered 1., 2., 3. — with real specifics (the exact words to write, the "
+            "exact place to go, the exact number to send/do).\n"
+            "  (B) Ask ONE sharp diagnostic question about the exact thing blocking them that you "
+            "have NOT already asked.\n"
+            "Keep it under 5 sentences. Be specific, human, and new.\n"
+            f'Advice already given (DO NOT repeat this): "{last_assistant[:300]}"\n'
+            "==========================================================================\n"
         )
+
+    try:
+        parsed = chat_json(system, user_payload)
+        # #region agent log
+        _dbg(
+            "coach.py:coach_reply:json_path",
+            "chat_json returned",
+            {
+                "loop_detected": loop_detected,
+                "asked_how": asked_how,
+                "override_applied": apply_override,
+                "has_assistant_message": bool(parsed.get("assistant_message")),
+                "assistant_head": str(parsed.get("assistant_message") or "")[:160],
+                "has_green_rep": bool(parsed.get("green_rep")),
+            },
+            "H16",
+        )
+        # #endregion
         if parsed.get("assistant_message"):
             return _normalize_coach_response(parsed, domain_map, checkin)
-    except Exception:
+    except Exception as _e:
+        # #region agent log
+        _dbg(
+            "coach.py:coach_reply:json_exception",
+            "chat_json raised — using fallback text path",
+            {"error": str(_e)[:200]},
+            "H8",
+        )
+        # #endregion
         pass
 
     # Fallback: conversational path
@@ -336,6 +472,49 @@ def _normalize_coach_response(
                 "steps": daily_rep.get("steps") or [],
                 "win_condition": daily_rep.get("win_condition") or "",
             }
+
+    # Backend explicitly requested a rep this turn (e.g. member asked "how do I
+    # start / what next"), but the model returned no green_rep. Fall back to the
+    # backend-provided milestone rep so the member gets a concrete action card
+    # instead of yet another advice paragraph — this is what breaks the loop.
+    rep_suppressed = bool(
+        awaiting_proof
+        or proof_integration
+        or intake_phase
+        or awaiting_intention
+        or awaiting_emotional
+        or conversation_signals.get("block_rep_reassign")
+        or checkin.get("suggest_session_end")
+        or checkin.get("reports_stagnation")
+        or conversation_signals.get("coaching_repeat_complaint")
+    )
+    if assign_green_rep_flag and not green_rep and not rep_suppressed:
+        fallback_rep = checkin.get("suggested_milestone_rep") or conversation_signals.get(
+            "suggested_green_rep"
+        )
+        if isinstance(fallback_rep, dict) and fallback_rep.get("name"):
+            green_rep = {
+                "name": fallback_rep["name"],
+                "steps": fallback_rep.get("steps") or [],
+                "win_condition": fallback_rep.get("win_condition") or "",
+            }
+            hints = {**hints, "assign_new_green_rep": True}
+
+    # #region agent log
+    _dbg(
+        "coach.py:_normalize:rep_fallback",
+        "green_rep resolution after normalize",
+        {
+            "assign_green_rep_flag": assign_green_rep_flag,
+            "rep_suppressed": rep_suppressed,
+            "final_has_green_rep": bool(green_rep),
+            "final_rep_name": (green_rep or {}).get("name"),
+            "had_suggested_milestone": bool(checkin.get("suggested_milestone_rep")),
+            "session_phase": session_phase,
+        },
+        "H14",
+    )
+    # #endregion
 
     return {
         "assistant_message": _sanitize_user_facing(parsed.get("assistant_message", "")),
