@@ -227,7 +227,27 @@ _COACH_CONTEXT_RULES = """RUNTIME — context contract:
 - COACH_MEMORY_CONTEXT.member_continuity: returning member thread — continue it, do not restart.
 - When COACH_CHECKIN.returning_member or do_not_reintroduce is true: no first-meeting greeting, no goal re-intro, no discovery re-interview.
 - coaching_memory.initial_diagnostic is FROZEN — compare only; never overwrite in your reply.
+- When COACH_CHECKIN.map_reference_required is true OR COACH_MEMORY_CONTEXT.diagnostic_report_excerpt is set: include ONE plain-language link to failure_strategy / flip_belief / milestone before advice or rep.
 - Populate writeback_hints when applicable: gravity_rating (1-10), cl_estimate (1-5), session_summary, assign_new_green_rep, etc."""
+
+_BODY_ECHO_RULES = """BODY ECHO + SMALLEST STEP (COACH_CHECKIN.body_echo_required = true):
+- Echo member body words verbatim once (e.g. tight chest, solar plexus) — do not paraphrase into generic "pressure".
+- Link sensation to old pattern in everyday words — no vortex/signature/protector labels.
+- Ask smallest step in the next hour tied to COACH_CHECKIN.session_intention — not generic "take a break" unless member chose rest."""
+
+_EDGE_COST_RULES = """EDGE + COST OF MOVING FORWARD (COACH_CHECKIN.edge_inquiry_required = true):
+- Before prescribing action or assigning a rep, ask ONE plain-language question: what is holding you back OR what would it cost to move forward?
+- Honour the protective part's good intention — it is trying to keep them safe.
+- After their answer, move to smallest rep or next step — do not lecture."""
+
+_INSIGHT_INTEGRATION_RULES = """INSIGHT INTEGRATION (session_phase = insight_integration):
+- Summarize the insight in the member's own words (one sentence).
+- Assign ONE Green Rep in green_rep JSON with writeback_hints.assign_new_green_rep = true.
+- Surface proof criteria tied to goal/milestone — no framework jargon."""
+
+_COACH_TRAINING_RULES = """SUGGESTED TRAINING (COACH_CHECKIN.suggest_training = true):
+- When stuck, high gravity, or resistance_probe: optionally mention ONE pick from COACH_CHECKIN.suggested_training_pick or COACH_MEMORY_CONTEXT.suggested_training.
+- Include why_chosen in one short sentence — no lecture or catalog dump."""
 
 FRICTION_RESCUE_RULES = """Short friction rescue grounded in failure_strategy from COACH_MEMORY_CONTEXT.
 Return JSON only: { "assistant_message": string, "green_rep": { "name", "steps", "win_condition" } | null }

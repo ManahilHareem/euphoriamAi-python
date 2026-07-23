@@ -20,6 +20,10 @@ from app.services.prompts import (
     _REFRAME_TOOLKIT,
     _RESISTANCE_PROBE_RULES,
     _SESSION_INTAKE_RULES,
+    _BODY_ECHO_RULES,
+    _EDGE_COST_RULES,
+    _INSIGHT_INTEGRATION_RULES,
+    _COACH_TRAINING_RULES,
     missing_prompt_notice,
 )
 
@@ -54,8 +58,12 @@ def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = N
         _SESSION_INTAKE_RULES,
         _EMOTIONAL_CHECKIN_RULES,
         _RESISTANCE_PROBE_RULES,
-        _REFRAME_TOOLKIT,
-        _COACH_CONTEXT_RULES,
+    _REFRAME_TOOLKIT,
+    _BODY_ECHO_RULES,
+    _EDGE_COST_RULES,
+    _INSIGHT_INTEGRATION_RULES,
+    _COACH_TRAINING_RULES,
+    _COACH_CONTEXT_RULES,
     ]
 
     if flags.get("coach_cert_deep_enabled"):
