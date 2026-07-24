@@ -57,6 +57,159 @@ _EXECUTION_COMMIT_USER = re.compile(
     r"\b(let me do|i'?ll do|i will do|on it|going to do|sounds good|got it)\b",
     re.I,
 )
+_USER_REJECTS_PRESCRIPTION = re.compile(
+    r"\b(don'?t want (?:an? )?(?:exercise|homework|action|step)|stop giving|stay with (?:the )?feeling|"
+    r"want to understand|help me (?:figure|understand|explore)|move(?:d|s)? back to (?:another )?(?:action|exercise))\b",
+    re.I,
+)
+_PRESCRIPTIVE_REPLY = re.compile(
+    r"(?:^\s*\d+\.|try this|here'?s (?:a|your|one) (?:action|exercise|step)|write down|close your eyes|"
+    r"take a deep breath|send (?:them|a message)|reach out|schedule (?:a|time)|small action|concrete step|"
+    r"step-by-step|micro-action)",
+    re.I | re.M,
+)
+_DIAGNOSIS_THEME = re.compile(
+    r"\b(fear of rejection|protective mechanism|being seen as too much|fear of being (?:seen|judged|rejected)|"
+    r"protect(?:ive|ing) (?:part|mechanism)|act of kindness|reach out|schedule (?:a|time to) catch up)\b",
+    re.I,
+)
+_DISCOVERY_QUESTION_FALLBACKS = (
+    "What are you experiencing right now — in your body, not your head?",
+    "Tell me more about the last time that pull-away feeling showed up.",
+    "Stay with that. What's the worst part of it?",
+    "What happens inside you the moment closeness starts to feel real?",
+)
+
+
+def _assistant_history(messages: list[dict], *, exclude_last_user: bool = True) -> list[str]:
+    src = messages[:-1] if exclude_last_user and messages and messages[-1].get("role") == "user" else messages
+    return [
+        str(m.get("content") or "").strip()
+        for m in src or []
+        if m.get("role") == "assistant" and str(m.get("content") or "").strip()
+    ]
+
+
+def _max_overlap_with_prior_assistant(assistant: str, messages: list[dict]) -> float:
+    prior = _assistant_history(messages)
+    if not prior or not assistant.strip():
+        return 0.0
+    return max(_token_overlap_ratio(assistant, p) for p in prior)
+
+
+def _is_prescriptive_reply(text: str) -> bool:
+    return bool(_PRESCRIPTIVE_REPLY.search(text or ""))
+
+
+def _repeated_diagnosis_theme(assistant: str, messages: list[dict]) -> bool:
+    if not _DIAGNOSIS_THEME.search(assistant or ""):
+        return False
+    prior = _assistant_history(messages)
+    return sum(1 for p in prior if _DIAGNOSIS_THEME.search(p)) >= 1
+
+
+def _discovery_only_active(checkin: dict, user_message: str | None = None) -> bool:
+    conv_sig = checkin.get("conversation_signals") or {}
+    return bool(
+        conv_sig.get("discovery_only_mode")
+        or conv_sig.get("anti_repeat_active")
+        or conv_sig.get("user_rejects_prescription")
+        or conv_sig.get("thematic_assistant_repeat")
+        or checkin.get("discovery_only_mode")
+        or checkin.get("coaching_mode") == "discovery"
+        and conv_sig.get("anti_repeat_active")
+        or (user_message and _USER_REJECTS_PRESCRIPTION.search(user_message))
+    )
+
+
+def _pick_discovery_fallback(user_message: str | None, messages: list[dict]) -> str:
+    idx = len(_assistant_history(messages, exclude_last_user=False)) % len(_DISCOVERY_QUESTION_FALLBACKS)
+    if user_message and re.search(r"\b(body|feel|feeling|anxiety|experience)\b", user_message, re.I):
+        return _DISCOVERY_QUESTION_FALLBACKS[0]
+    if user_message and re.search(r"\b(understand|why|where|come from|roots?)\b", user_message, re.I):
+        return _DISCOVERY_QUESTION_FALLBACKS[1]
+    return _DISCOVERY_QUESTION_FALLBACKS[idx]
+
+
+def _strip_prescriptive_content(text: str) -> str:
+    lines = []
+    for line in (text or "").splitlines():
+        if re.match(r"^\s*\d+[\.)]\s+", line):
+            continue
+        if _PRESCRIPTIVE_REPLY.search(line) and len(line.split()) > 6:
+            continue
+        lines.append(line)
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return cleaned
+
+
+def _enforce_anti_repeat_reply(
+    result: dict,
+    *,
+    messages: list[dict],
+    user_message: str | None,
+    checkin: dict,
+) -> dict:
+    assistant = str(result.get("assistant_message") or "").strip()
+    if not assistant:
+        return result
+
+    conv_sig = checkin.get("conversation_signals") or {}
+    discovery_only = _discovery_only_active(checkin, user_message)
+    loop_detected = bool(
+        conv_sig.get("assistant_advice_loop")
+        or conv_sig.get("repeated_assistant_advice")
+        or conv_sig.get("thematic_assistant_repeat")
+        or conv_sig.get("anti_repeat_active")
+        or checkin.get("assistant_advice_loop")
+        or checkin.get("repeated_assistant_advice")
+    )
+    execution_commit = bool(
+        conv_sig.get("user_commitment_to_act")
+        or conv_sig.get("execution_confirmed")
+        or checkin.get("execution_confirmed")
+        or (user_message and _EXECUTION_COMMIT_USER.search(user_message))
+    )
+    prior = _last_assistant_content(messages[:-1] if user_message else messages)
+    overlap_last = _token_overlap_ratio(assistant, prior) if prior else 0.0
+    overlap_max = _max_overlap_with_prior_assistant(assistant, messages)
+    exact_dup = prior and prior.strip() == assistant.strip()
+    thematic_dup = _repeated_diagnosis_theme(assistant, messages)
+    prescriptive = _is_prescriptive_reply(assistant)
+
+    must_rewrite = bool(
+        exact_dup
+        or overlap_max >= 0.38
+        or overlap_last >= 0.38
+        or thematic_dup
+        or (discovery_only and prescriptive)
+        or (loop_detected and (prescriptive or overlap_max >= 0.28 or thematic_dup))
+    )
+
+    if not must_rewrite:
+        return result
+
+    if execution_commit and not discovery_only and overlap_last >= 0.85:
+        replacement = _brief_execution_ack(user_message)
+    elif discovery_only or loop_detected or prescriptive or thematic_dup:
+        replacement = _pick_discovery_fallback(user_message, messages)
+        stripped = _strip_prescriptive_content(assistant)
+        if stripped and not _is_prescriptive_reply(stripped) and overlap_max < 0.38:
+            if "?" in stripped and len(stripped.split()) <= 45:
+                replacement = stripped
+    else:
+        replacement = _pick_discovery_fallback(user_message, messages)
+
+    result = {
+        **result,
+        "assistant_message": _sanitize_user_facing(replacement),
+        "green_rep": None,
+        "writeback_hints": {
+            **(result.get("writeback_hints") or {}),
+            "assign_new_green_rep": False,
+        },
+    }
+    return result
 
 
 def _token_overlap_ratio(a: str, b: str) -> float:
@@ -78,43 +231,6 @@ def _brief_execution_ack(user_message: str | None = None) -> str:
     if user_message and _EXECUTION_COMMIT_USER.search(user_message):
         return "Good — go do it. When you're done, come back and tell me what happened."
     return "Got it — take that step and tell me how it goes when you're done."
-
-
-def _replace_duplicate_assistant_reply(
-    result: dict,
-    *,
-    messages: list[dict],
-    user_message: str | None,
-    checkin: dict,
-) -> dict:
-    assistant = str(result.get("assistant_message") or "").strip()
-    if not assistant:
-        return result
-    prior = _last_assistant_content(
-        messages[:-1] if user_message else messages
-    )
-    if not prior:
-        return result
-    overlap = _token_overlap_ratio(assistant, prior)
-    conv_sig = checkin.get("conversation_signals") or {}
-    execution_commit = bool(
-        conv_sig.get("user_commitment_to_act")
-        or conv_sig.get("execution_confirmed")
-        or checkin.get("execution_confirmed")
-        or (user_message and _EXECUTION_COMMIT_USER.search(user_message))
-    )
-    if overlap >= 0.45 or (prior.strip() == assistant.strip()):
-        if execution_commit or overlap >= 0.85:
-            result = {
-                **result,
-                "assistant_message": _sanitize_user_facing(_brief_execution_ack(user_message)),
-                "green_rep": None,
-                "writeback_hints": {
-                    **(result.get("writeback_hints") or {}),
-                    "assign_new_green_rep": False,
-                },
-            }
-    return result
 
 
 def _sanitize_user_facing(text: str | None) -> str:
@@ -225,9 +341,12 @@ def coach_reply(
     # ignored by the model. Append a blunt, high-recency override at the END of
     # the user payload (the last tokens the model reads) so it CANNOT be missed.
     conv_sig = checkin.get("conversation_signals") or {}
+    discovery_only = _discovery_only_active(checkin, user_message)
     loop_detected = bool(
         conv_sig.get("assistant_advice_loop")
         or conv_sig.get("repeated_assistant_advice")
+        or conv_sig.get("thematic_assistant_repeat")
+        or conv_sig.get("anti_repeat_active")
         or checkin.get("assistant_advice_loop")
         or checkin.get("repeated_assistant_advice")
     )
@@ -237,12 +356,9 @@ def coach_reply(
         or checkin.get("execution_confirmed")
         or (user_message and _EXECUTION_COMMIT_USER.search(str(user_message)))
     )
-    # The member explicitly asking "how / what steps / how do I do it" is the
-    # strongest signal they want a concrete action, not another generic tip. Fire
-    # the override here too so we never answer a "how?" with recycled advice.
     asked_how = bool(
         conv_sig.get("user_asked_what_next") or checkin.get("user_asked_what_next")
-    )
+    ) and not discovery_only
     intake_or_proof = str(checkin.get("session_phase") or "") in {
         "intention",
         "emotional_checkin",
@@ -251,7 +367,9 @@ def coach_reply(
         "integration",
         "integration_deep",
     } or bool(checkin.get("awaiting_proof_log") or checkin.get("proof_integration_mode"))
-    apply_override = (loop_detected or asked_how or execution_commit) and not intake_or_proof
+    apply_override = (
+        discovery_only or loop_detected or execution_commit or asked_how
+    ) and not intake_or_proof
     last_assistant = ""
     for _m in reversed(messages[:-1] if user_message else messages):
         if _m.get("role") == "assistant" and _m.get("content"):
@@ -267,7 +385,7 @@ def coach_reply(
         user_coach_context=user_coach_context,
     )
     if apply_override:
-        if execution_commit and not loop_detected and not asked_how:
+        if execution_commit and not loop_detected and not asked_how and not discovery_only:
             user_payload += (
                 "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
                 "The member just AGREED to execute the plan you already gave (e.g. 'let me do it').\n"
@@ -276,23 +394,24 @@ def coach_reply(
                 f'Plan already given (DO NOT repeat): "{last_assistant[:400]}"\n'
                 "==========================================================================\n"
             )
+        elif discovery_only or loop_detected:
+            user_payload += (
+                "\n\n================ CRITICAL OVERRIDE — ANTI-REPEAT / DISCOVERY ONLY ================\n"
+                "Zero tolerance: do NOT repeat prior advice, diagnosis labels, themes, or exercises.\n"
+                "Member rejected homework OR you already repeated yourself OR they asked to stay with feeling.\n"
+                "Reply in 1-3 SHORT sentences with ONE new question only.\n"
+                "FORBIDDEN: numbered lists, outreach tasks, breathing/writing exercises, Green Rep, "
+                "'fear of rejection', 'protective mechanism', 'Let's focus on', 'small actionable step'.\n"
+                "Follow their thread. Let them discover — do not solve.\n"
+                f'Prior advice themes to AVOID: "{last_assistant[:350]}"\n'
+                "==========================================================================\n"
+            )
         else:
             user_payload += (
                 "\n\n================ CRITICAL OVERRIDE — READ LAST, OBEY FIRST ================\n"
-                "Your recent replies repeated the SAME advice and the member is frustrated and "
-                "is literally asking HOW to do it.\n"
-                "This turn you are FORBIDDEN from repeating that advice or its themes: optimizing or "
-                "sending proposals, increasing profile views, sharing the profile on social media / "
-                "forums, or any generic 'boost visibility' tip.\n"
-                "Do NOT restate the goal or milestone. Do NOT open with 'Let's focus on'. Do NOT end "
-                "with 'How does that sound?'.\n"
-                "You MUST do EXACTLY ONE of the following:\n"
-                "  (A) Give a concrete, step-by-step micro-action they can finish in the next 10 "
-                "minutes — numbered 1., 2., 3. — with real specifics (the exact words to write, the "
-                "exact place to go, the exact number to send/do).\n"
-                "  (B) Ask ONE sharp diagnostic question about the exact thing blocking them that you "
-                "have NOT already asked.\n"
-                "Keep it under 5 sentences. Be specific, human, and new.\n"
+                "Your recent replies repeated the SAME advice and the member is frustrated.\n"
+                "Do NOT restate the goal or milestone. Do NOT open with 'Let's focus on'.\n"
+                "Ask ONE sharp NEW question you have not asked — under 3 sentences. No numbered steps.\n"
                 f'Advice already given (DO NOT repeat this): "{last_assistant[:300]}"\n'
                 "==========================================================================\n"
             )
@@ -316,7 +435,7 @@ def coach_reply(
         # #endregion
         if parsed.get("assistant_message"):
             normalized = _normalize_coach_response(parsed, domain_map, checkin)
-            return _replace_duplicate_assistant_reply(
+            return _enforce_anti_repeat_reply(
                 normalized,
                 messages=messages,
                 user_message=user_message,

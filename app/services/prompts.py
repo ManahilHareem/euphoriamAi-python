@@ -206,6 +206,13 @@ _COACH_HUMAN_TONE_RULES = """RUNTIME — IP protection:
 - NEVER narrate the conversation itself. Do NOT tell the member the chat is looping, circling, repeating, or "going in circles"; do NOT say "we've been here before", "similar advice", "same advice", "let's break this cycle", or comment on your own repetition. If your guidance would repeat, SILENTLY switch to a new angle — a concrete next step, a different question, or a real-world action — without announcing the change.
 - Naming the member's real-world stuck pattern is allowed; narrating the dialogue's repetitiveness is not."""
 
+_ANTI_REPEAT_DISCOVERY_RULES = """ANTI-REPEAT / DISCOVERY ONLY (when COACH_CHECKIN.conversation_signals.discovery_only_mode or anti_repeat_active is true):
+- ZERO tolerance for repeating prior advice, diagnosis labels, themes, or homework — even paraphrased.
+- Reply in 1-3 SHORT sentences with ONE new question only. No paragraphs.
+- FORBIDDEN: numbered lists, outreach/send-a-message tasks, breathing/writing exercises, Green Rep, "fear of rejection", "protective mechanism", "Let's focus on", "small actionable step", restating their goal.
+- When member rejects exercises or asks to stay with feeling / understand roots: discovery only — follow their thread, do not solve.
+- Obey this block over COACH_WHAT_NEXT, Green Rep, and action-bias rules until anti_repeat clears."""
+
 _COACH_BARRIER_AND_LOOP_RULES = """RUNTIME — obey COACH_CHECKIN.conversation_signals and COACH_MEMORY_CONTEXT.member_barriers.
 When present, follow those flags over any conflicting generic coaching instruction.
 
