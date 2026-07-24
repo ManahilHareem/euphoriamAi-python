@@ -31,6 +31,25 @@ class CoachPromptComposeRagTests(unittest.TestCase):
         self.assertIn("BRAIN PROMPT (Canonical library", system)
         self.assertIn("Full canonical library", system)
 
+    def test_nathan_structural_coaching_rules_present(self):
+        system = compose_coach_system(
+            {
+                "coach_brain_prompt": "Goal OS",
+                "brain_prompt": "Library",
+            },
+        )
+        self.assertIn("NATHAN STRUCTURAL COACHING LOOP", system)
+        self.assertIn("EMOTIONAL DISCOVERY", system)
+        self.assertIn("CONTRADICTION STEP", system)
+        self.assertIn("TODAYS_EDGE", system)
+        self.assertIn("exactly ONE resource", system)
+        self.assertIn("ANTI-CHATBOT", system)
+        self.assertIn("Do NOT paraphrase", system)
+        self.assertIn("exactly ONE discovery question", system)
+        self.assertIn("DISCOVERY PROGRESSION", system)
+        self.assertIn("BREAKTHROUGH / CORE BELIEF", system)
+        self.assertIn("Never return to an earlier layer", system)
+
 
 if __name__ == "__main__":
     unittest.main()

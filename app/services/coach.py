@@ -49,6 +49,33 @@ _TEMPLATE_LABEL_BLOCK = re.compile(
     r"Today'?s?\s+Green\s+Rep|Win\s+Condition)\s*:\*\*[\s\S]*$",
     re.I,
 )
+_CHATBOT_FILLER = re.compile(
+    r"(?:this is a great (?:moment|opportunity)[^.!?\n]*[.!?]?\s*)|"
+    r"(?:understanding this can help us[^.!?\n]*[.!?]?\s*)|"
+    r"(?:this can help us (?:identify|understand|figure)[^.!?\n]*[.!?]?\s*)|"
+    r"(?:let'?s (?:unpack|explore|reflect on|focus on) (?:that|this|what)[^.!?\n]*[.!?]?\s*)|"
+    r"(?:it sounds like[^.!?\n]*[.!?]?\s*)|"
+    r"(?:you'?ve shared a lot[^.!?\n]*[.!?]?\s*)|"
+    r"(?:once we understand[^.!?\n]*[.!?]?\s*)",
+    re.I,
+)
+_CORE_BELIEF_SIGNAL = re.compile(
+    r"\b("
+    r"only valuable when|not enough|have to earn|isn'?t enough|"
+    r"not valued for who i am|only worth|only worth reaching|"
+    r"i'?m only valuable|who i am isn'?t enough|have something to offer|"
+    r"valuable when i have|earn (?:love|worth|connection|value)"
+    r")\b",
+    re.I,
+)
+_SURFACE_FEELING_REOPEN = re.compile(
+    r"\b("
+    r"shifts? in (?:your )?feelings|changes? in (?:your )?(?:feelings|thoughts)|"
+    r"notice any (?:shifts|changes)|let'?s explore what happened|"
+    r"what happened when you considered|reflect on what happened"
+    r")\b",
+    re.I,
+)
 _REP_REQUIRES_PERSON = re.compile(
     r"\b(someone|person|trust|send\s+it|send\s+to|reach\s+out|friend|family|tell\s+them|text\s+them)\b",
     re.I,
@@ -123,6 +150,7 @@ def _sanitize_user_facing(text: str | None) -> str:
     out = _REPORT_HEADERS.sub("", text)
     out = _FRAMEWORK_TERMS.sub("pattern", out)
     out = _TEMPLATE_LABEL_BLOCK.sub("", out)
+    out = _CHATBOT_FILLER.sub("", out)
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 STATE_LABELS = {
@@ -266,6 +294,78 @@ def coach_reply(
         active_goal_context=active_goal_context,
         user_coach_context=user_coach_context,
     )
+
+    # Nathan discovery — dig deeper each turn; never regress after a breakthrough.
+    discovery_phase = str(checkin.get("session_phase") or "") in {
+        "intention",
+        "emotional_checkin",
+        "resistance_probe",
+        "deep_probe",
+        "explore",
+    }
+    user_turns = sum(
+        1 for m in (messages or []) if m.get("role") == "user" and str(m.get("content") or "").strip()
+    )
+    latest_user = str(user_message or "").strip()
+    if not latest_user:
+        for _m in reversed(messages or []):
+            if _m.get("role") == "user" and str(_m.get("content") or "").strip():
+                latest_user = str(_m["content"]).strip()
+                break
+    core_belief = bool(_CORE_BELIEF_SIGNAL.search(latest_user))
+    prior_surface_ask = bool(_SURFACE_FEELING_REOPEN.search(last_assistant))
+    transcript_text = " ".join(
+        str(m.get("content") or "") for m in (messages or []) if m.get("role") == "user"
+    )
+    identity_already = bool(_CORE_BELIEF_SIGNAL.search(transcript_text))
+
+    early_discovery = discovery_phase and user_turns <= 8 and not execution_commit and not loop_detected
+    if core_belief and discovery_phase and not apply_override:
+        user_payload += (
+            "\n\n================ CRITICAL OVERRIDE — BREAKTHROUGH / CORE BELIEF — OBEY FIRST ================\n"
+            "The member just revealed a CORE BELIEF / identity wound (e.g. only valuable when offering something,\n"
+            "not enough, have to earn worth). This is a BREAKTHROUGH.\n"
+            "You MUST go ONE LAYER DEEPER — origin / first learning / protector cost.\n"
+            "FORBIDDEN this turn:\n"
+            '  - Asking about "shifts in feelings", "changes in thoughts", or reopening what already happened\n'
+            '  - "Let\'s explore…", "It sounds like…", "You\'ve shared a lot…", long paraphrase\n'
+            "Reply with at most a tiny cue + ONE deeper question, e.g.:\n"
+            '  "Stay with that. When did you first learn that you had to earn your value?"\n'
+            '  "Who taught you that?"\n'
+            '  "What is your protector trying to prevent by believing that?"\n'
+            "Exactly ONE question mark. No advice. No Green Rep yet.\n"
+            "==========================================================================\n"
+        )
+    elif identity_already and discovery_phase and not apply_override:
+        user_payload += (
+            "\n\n================ CRITICAL OVERRIDE — DISCOVERY PROGRESSION — OBEY FIRST ================\n"
+            "A core belief was ALREADY revealed earlier in this session.\n"
+            "Do NOT return to surface feeling/thought questions.\n"
+            "Next step only: origin (when/who taught them) OR contradiction reveal if origin is already clear,\n"
+            "then ONE Green Rep if assign_green_rep is true.\n"
+            "FORBIDDEN: reopening 'what happened / shifts in feelings / changes in thoughts'.\n"
+            "Exactly ONE question mark if still discovering. Sparse Nathan tone.\n"
+            "==========================================================================\n"
+        )
+    elif early_discovery and not apply_override:
+        anti_reopen = ""
+        if prior_surface_ask or user_turns >= 2:
+            anti_reopen = (
+                "Do NOT repeat any earlier surface question about feelings/thoughts shifting.\n"
+                "Move ONE layer deeper than the last answered layer.\n"
+            )
+        user_payload += (
+            "\n\n================ CRITICAL OVERRIDE — NATHAN DISCOVERY — OBEY FIRST ================\n"
+            "Follow the discovery ladder: behavior → emotion → meaning → identity → origin → contradiction → Green Rep.\n"
+            "Never go backwards up the ladder.\n"
+            f"{anti_reopen}"
+            "FORBIDDEN filler: Let's explore / It sounds like / You've shared a lot / Thank you for sharing (overuse).\n"
+            "Prefer: Stay with that. / Tell me more. / What felt dangerous? / Why? / Go deeper.\n"
+            "Exactly ONE question mark. No advice. No Green Rep until contradiction is clear.\n"
+            "Keep under 3 short sentences.\n"
+            "==========================================================================\n"
+        )
+
     if apply_override:
         if execution_commit and not loop_detected and not asked_how:
             user_payload += (
@@ -534,6 +634,12 @@ def _normalize_coach_response(
         hints["session_intention"] = checkin.get("session_intention")
     if checkin.get("felt_sensation") and not hints.get("felt_sensation"):
         hints["felt_sensation"] = checkin.get("felt_sensation")
+
+    # Nathan structural coaching — persist today's edge + contradiction when model provides them
+    for key in ("todays_edge", "contradiction_revealed"):
+        raw = parsed.get(key) or hints.get(key)
+        if raw and isinstance(raw, str) and raw.strip():
+            hints[key] = raw.strip()[:280]
 
     if bool(checkin.get("reports_stagnation")) or bool(
         (checkin.get("conversation_signals") or {}).get("coaching_repeat_complaint")
