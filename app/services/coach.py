@@ -78,6 +78,8 @@ _DISCOVERY_QUESTION_FALLBACKS = (
     "Tell me more about the last time that pull-away feeling showed up.",
     "Stay with that. What's the worst part of it?",
     "What happens inside you the moment closeness starts to feel real?",
+    "What part of that feels most alive for you right now?",
+    "If you didn't pull away, what would you be afraid might happen next?",
 )
 
 
@@ -112,23 +114,48 @@ def _discovery_only_active(checkin: dict, user_message: str | None = None) -> bo
     conv_sig = checkin.get("conversation_signals") or {}
     return bool(
         conv_sig.get("discovery_only_mode")
+        or conv_sig.get("explore_first_mode")
         or conv_sig.get("anti_repeat_active")
         or conv_sig.get("user_rejects_prescription")
         or conv_sig.get("thematic_assistant_repeat")
         or checkin.get("discovery_only_mode")
         or checkin.get("coaching_mode") == "discovery"
-        and conv_sig.get("anti_repeat_active")
         or (user_message and _USER_REJECTS_PRESCRIPTION.search(user_message))
     )
 
 
 def _pick_discovery_fallback(user_message: str | None, messages: list[dict]) -> str:
-    idx = len(_assistant_history(messages, exclude_last_user=False)) % len(_DISCOVERY_QUESTION_FALLBACKS)
+    prior = _assistant_history(messages, exclude_last_user=False)
+    candidates: list[str] = []
+
     if user_message and re.search(r"\b(body|feel|feeling|anxiety|experience)\b", user_message, re.I):
-        return _DISCOVERY_QUESTION_FALLBACKS[0]
-    if user_message and re.search(r"\b(understand|why|where|come from|roots?)\b", user_message, re.I):
-        return _DISCOVERY_QUESTION_FALLBACKS[1]
-    return _DISCOVERY_QUESTION_FALLBACKS[idx]
+        candidates.append(_DISCOVERY_QUESTION_FALLBACKS[0])
+    if user_message and re.search(r"\b(understand|why|where|come from|roots?|underneath)\b", user_message, re.I):
+        candidates.append(_DISCOVERY_QUESTION_FALLBACKS[1])
+
+    idx = len(prior) % len(_DISCOVERY_QUESTION_FALLBACKS)
+    candidates.extend(_DISCOVERY_QUESTION_FALLBACKS[idx:] + _DISCOVERY_QUESTION_FALLBACKS[:idx])
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for q in candidates:
+        key = q.strip().lower()
+        if key not in seen:
+            seen.add(key)
+            ordered.append(q)
+
+    fresh = [q for q in ordered if all(_token_overlap_ratio(q, p) < 0.38 for p in prior)]
+    if fresh:
+        return fresh[0]
+
+    best = ordered[0] if ordered else _DISCOVERY_QUESTION_FALLBACKS[0]
+    best_score = 1.0
+    for q in ordered or _DISCOVERY_QUESTION_FALLBACKS:
+        score = max((_token_overlap_ratio(q, p) for p in prior), default=0.0)
+        if score < best_score:
+            best_score = score
+            best = q
+    return best
 
 
 def _strip_prescriptive_content(text: str) -> str:
@@ -170,10 +197,11 @@ def _enforce_anti_repeat_reply(
         or checkin.get("execution_confirmed")
         or (user_message and _EXECUTION_COMMIT_USER.search(user_message))
     )
+    prior_assistants = _assistant_history(messages)
     prior = _last_assistant_content(messages[:-1] if user_message else messages)
     overlap_last = _token_overlap_ratio(assistant, prior) if prior else 0.0
     overlap_max = _max_overlap_with_prior_assistant(assistant, messages)
-    exact_dup = prior and prior.strip() == assistant.strip()
+    exact_dup = any(p.strip() == assistant.strip() for p in prior_assistants)
     thematic_dup = _repeated_diagnosis_theme(assistant, messages)
     prescriptive = _is_prescriptive_reply(assistant)
 
@@ -486,12 +514,18 @@ def coach_reply(
             "win_condition": domain_map.get("win_condition") or "",
         }
 
-    return {
+    result = {
         "assistant_message": _sanitize_user_facing(text),
         "green_rep": green_rep,
         "detected_failure_strategy": None,
         "writeback_hints": {},
     }
+    return _enforce_anti_repeat_reply(
+        result,
+        messages=messages,
+        user_message=user_message,
+        checkin=checkin,
+    )
 
 
 def friction_rescue(

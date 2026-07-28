@@ -11,6 +11,7 @@ from app.services.prompts import (
     _COACH_DIRECTIVE_PROGRESSION_RULES,
     _COACH_HUMAN_TONE_RULES,
     _ANTI_REPEAT_DISCOVERY_RULES,
+    _NATHAN_DISCOVERY_RULES,
     _COACH_PROOF_INTEGRATION_RULES,
     _COACH_SESSION_PHASE_RULES,
     _COACH_V2_RULES,
@@ -49,9 +50,10 @@ def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = N
     prompts = prompts or {}
     flags = feature_flags or prompts.get("feature_flags") or {}
     parts: list[str] = [
-    _COACH_HUMAN_TONE_RULES,
-    _ANTI_REPEAT_DISCOVERY_RULES,
-    _COACH_DIRECTIVE_PROGRESSION_RULES,
+        _COACH_HUMAN_TONE_RULES,
+        _ANTI_REPEAT_DISCOVERY_RULES,
+        _NATHAN_DISCOVERY_RULES,
+        _COACH_DIRECTIVE_PROGRESSION_RULES,
         _COACH_EVIDENCE_RULES,
         _COACH_WHAT_NEXT_RULES,
         _COACH_BARRIER_AND_LOOP_RULES,
@@ -60,12 +62,12 @@ def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = N
         _SESSION_INTAKE_RULES,
         _EMOTIONAL_CHECKIN_RULES,
         _RESISTANCE_PROBE_RULES,
-    _REFRAME_TOOLKIT,
-    _BODY_ECHO_RULES,
-    _EDGE_COST_RULES,
-    _INSIGHT_INTEGRATION_RULES,
-    _COACH_TRAINING_RULES,
-    _COACH_CONTEXT_RULES,
+        _REFRAME_TOOLKIT,
+        _BODY_ECHO_RULES,
+        _EDGE_COST_RULES,
+        _INSIGHT_INTEGRATION_RULES,
+        _COACH_TRAINING_RULES,
+        _COACH_CONTEXT_RULES,
     ]
 
     if flags.get("coach_cert_deep_enabled"):
