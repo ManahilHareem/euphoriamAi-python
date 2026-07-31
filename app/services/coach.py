@@ -9,31 +9,6 @@ from app.services.llm import chat_json, chat_text
 from app.services.prompt_compose import compose_coach_system, compose_friction_system
 
 
-# #region agent log
-def _dbg(location, message, data, hyp):
-    try:
-        import urllib.request as _u
-        import json as _j
-        import time as _t
-
-        _payload = {
-            "sessionId": "cbefd4",
-            "hypothesisId": hyp,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(_t.time() * 1000),
-        }
-        _r = _u.Request(
-            "http://host.docker.internal:7276/ingest/a6c3c50f-2380-49c9-8118-307947533aae",
-            data=_j.dumps(_payload).encode(),
-            headers={"Content-Type": "application/json", "X-Debug-Session-Id": "cbefd4"},
-        )
-        _u.urlopen(_r, timeout=1)
-    except Exception:
-        pass
-# #endregion
-
 _FRAMEWORK_TERMS = re.compile(
     r"\b(vortex|signature\s*id|EO\b|lack\s*channel|avoidance\s*channel|QGC|CL\s*estimate|"
     r"consciousness\s*level|gravity\s*depth|orbit\s*pattern|abducted\s*by\s*vortex)\b",
@@ -329,41 +304,6 @@ def coach_reply(
     prompts_with_flags = {**(prompts or {}), "feature_flags": flags}
     system = compose_coach_system(prompts_with_flags, feature_flags=flags)
 
-    # #region agent log
-    _p = prompts or {}
-    _cb = _p.get("coach_brain_prompt") or ""
-    _bp = _p.get("brain_prompt") or ""
-    _sys_l = system.lower()
-    _cs = checkin or {}
-    _sig = _cs.get("conversation_signals") or {}
-    _dbg(
-        "coach.py:coach_reply:compose",
-        "composed coach system prompt + flags + db prompts",
-        {
-            "cert_deep": bool(flags.get("coach_cert_deep_enabled")),
-            "brain_v2": bool(flags.get("brain_prompt_v2_shadow")),
-            "treatment_plan": bool(flags.get("treatment_plan_enabled")),
-            "coach_brain_len": len(_cb),
-            "coach_brain_head": _cb[:150],
-            "brain_len": len(_bp),
-            "brain_head": _bp[:150],
-            "prompt_keys_present": [k for k, v in _p.items() if v and k != "feature_flags"],
-            "system_len": len(system),
-            "has_missing_notice": "not configured in the database" in _sys_l
-            or "missing" in _sys_l and "prompt" in _sys_l,
-            "system_mentions_intention": "intention" in _sys_l,
-            "system_mentions_resistance": "resistance" in _sys_l,
-            "session_phase": str(_cs.get("session_phase") or ""),
-            "coaching_mode": str(_cs.get("coaching_mode") or ""),
-            "execution_confirmed": bool(_sig.get("execution_confirmed")),
-            "clarity_saturation": bool(_sig.get("clarity_saturation")),
-            "repeat_complaint": bool(_sig.get("coaching_repeat_complaint")),
-            "msg_count": len(messages),
-        },
-        "H6-H9",
-    )
-    # #endregion
-
     # When the backend has already detected that recent advice is repeating, the
     # tiny per-turn steering directive buried in the 110K system prompt is being
     # ignored by the model. Append a blunt, high-recency override at the END of
@@ -446,21 +386,6 @@ def coach_reply(
 
     try:
         parsed = chat_json(system, user_payload)
-        # #region agent log
-        _dbg(
-            "coach.py:coach_reply:json_path",
-            "chat_json returned",
-            {
-                "loop_detected": loop_detected,
-                "asked_how": asked_how,
-                "override_applied": apply_override,
-                "has_assistant_message": bool(parsed.get("assistant_message")),
-                "assistant_head": str(parsed.get("assistant_message") or "")[:160],
-                "has_green_rep": bool(parsed.get("green_rep")),
-            },
-            "H16",
-        )
-        # #endregion
         if parsed.get("assistant_message"):
             normalized = _normalize_coach_response(parsed, domain_map, checkin)
             return _enforce_anti_repeat_reply(
@@ -469,15 +394,7 @@ def coach_reply(
                 user_message=user_message,
                 checkin=checkin,
             )
-    except Exception as _e:
-        # #region agent log
-        _dbg(
-            "coach.py:coach_reply:json_exception",
-            "chat_json raised — using fallback text path",
-            {"error": str(_e)[:200]},
-            "H8",
-        )
-        # #endregion
+    except Exception:
         pass
 
     # Fallback: conversational path
@@ -740,22 +657,6 @@ def _normalize_coach_response(
                 "win_condition": fallback_rep.get("win_condition") or "",
             }
             hints = {**hints, "assign_new_green_rep": True}
-
-    # #region agent log
-    _dbg(
-        "coach.py:_normalize:rep_fallback",
-        "green_rep resolution after normalize",
-        {
-            "assign_green_rep_flag": assign_green_rep_flag,
-            "rep_suppressed": rep_suppressed,
-            "final_has_green_rep": bool(green_rep),
-            "final_rep_name": (green_rep or {}).get("name"),
-            "had_suggested_milestone": bool(checkin.get("suggested_milestone_rep")),
-            "session_phase": session_phase,
-        },
-        "H14",
-    )
-    # #endregion
 
     return {
         "assistant_message": _sanitize_user_facing(parsed.get("assistant_message", "")),
