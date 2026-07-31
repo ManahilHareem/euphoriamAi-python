@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.services.coach import coach_reply, friction_rescue
+from app.services.coach import coach_reply, coach_reply_stream, friction_rescue
 from app.services.prompt_cache import resolve_prompts
 
 router = APIRouter(prefix="/v1/coach", tags=["coach"])
@@ -50,6 +53,46 @@ def post_coach_reply(body: CoachReplyRequest):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+@router.post("/reply/stream")
+def post_coach_reply_stream(body: CoachReplyRequest):
+    try:
+        prompts = _resolve_request_prompts(body)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    def event_gen():
+        try:
+            for event in coach_reply_stream(
+                domain_map=body.domain_map,
+                checkin=body.checkin,
+                messages=body.messages,
+                user_message=body.user_message,
+                prompts=prompts,
+                active_goal_context=body.active_goal_context,
+                user_coach_context=body.user_coach_context,
+                feature_flags=body.feature_flags,
+            ):
+                yield _sse(event)
+        except Exception as exc:
+            yield _sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 class FrictionRequest(BaseModel):

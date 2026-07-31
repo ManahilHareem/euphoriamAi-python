@@ -5,7 +5,10 @@ import json
 import re
 
 from app.config import merge_feature_flags
-from app.services.llm import chat_json, chat_text
+from collections.abc import Iterator
+from typing import Any
+
+from app.services.llm import chat_json, chat_json_stream, chat_text, chat_text_stream
 from app.services.prompt_compose import compose_coach_system, compose_friction_system
 
 
@@ -22,6 +25,11 @@ _REPORT_HEADERS = re.compile(
 _TEMPLATE_LABEL_BLOCK = re.compile(
     r"\n\s*\*\*(?:Pattern|Cost|Failure\s+Strategy|Success\s+Strategy|"
     r"Today'?s?\s+Green\s+Rep|Win\s+Condition)\s*:\*\*[\s\S]*$",
+    re.I,
+)
+_DANGLING_NEXT_STEP_LEADIN = re.compile(
+    r"(?:^|\n)\s*(?:here'?s (?:what to do|your next step)|your next step is(?: the)?|"
+    r"next step is the)\s*:?\s*$",
     re.I,
 )
 _REP_REQUIRES_PERSON = re.compile(
@@ -242,7 +250,9 @@ def _sanitize_user_facing(text: str | None) -> str:
     out = _REPORT_HEADERS.sub("", text)
     out = _FRAMEWORK_TERMS.sub("pattern", out)
     out = _TEMPLATE_LABEL_BLOCK.sub("", out)
-    return re.sub(r"\n{3,}", "\n\n", out).strip()
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+    out = _DANGLING_NEXT_STEP_LEADIN.sub("", out).strip()
+    return out
 
 STATE_LABELS = {
     "abducted": "Abducted by Vortex",
@@ -278,18 +288,18 @@ def _build_coach_user_payload(
     return json.dumps(payload, indent=2)
 
 
-def coach_reply(
+def _prepare_coach_turn(
     *,
     domain_map: dict,
     checkin: dict,
-    messages: list[dict] | None = None,
-    user_message: str | None = None,
-    prompts: dict | None = None,
-    active_goal_context: dict | None = None,
-    user_coach_context: dict | None = None,
-    feature_flags: dict | None = None,
-) -> dict:
-    messages = messages or []
+    messages: list[dict] | None,
+    user_message: str | None,
+    prompts: dict | None,
+    active_goal_context: dict | None,
+    user_coach_context: dict | None,
+    feature_flags: dict | None,
+) -> tuple[str, str, list[dict], dict, dict | None, dict | None]:
+    messages = list(messages or [])
     state = checkin.get("current_state") or checkin.get("state") or "clear"
     checkin = {
         **checkin,
@@ -384,33 +394,17 @@ def coach_reply(
                 "==========================================================================\n"
             )
 
-    try:
-        parsed = chat_json(system, user_payload)
-        if parsed.get("assistant_message"):
-            normalized = _normalize_coach_response(parsed, domain_map, checkin)
-            return _enforce_anti_repeat_reply(
-                normalized,
-                messages=messages,
-                user_message=user_message,
-                checkin=checkin,
-            )
-    except Exception:
-        pass
+    return system, user_payload, messages, checkin, active_goal_context, user_coach_context
 
-    # Fallback: conversational path
-    context_block = ""
-    if user_coach_context:
-        context_block += f"USER_COACH_CONTEXT:\n{json.dumps(user_coach_context, indent=2)}\n\n"
-    if active_goal_context:
-        context_block += f"ACTIVE_GOAL_CONTEXT:\n{json.dumps(active_goal_context, indent=2)}\n\n"
-    system = (
-        f"{system}\n\n"
-        f"{context_block}"
-        f"domain_map:\n{json.dumps(domain_map, indent=2)}\n\n"
-        f"checkin:\n{json.dumps(checkin, indent=2)}"
-    )
-    llm_messages = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
-    text = chat_text(system, llm_messages)
+
+def _fallback_text_result(
+    *,
+    text: str,
+    domain_map: dict,
+    checkin: dict,
+    messages: list[dict],
+    user_message: str | None,
+) -> dict:
     progress_mode = (
         str(checkin.get("current_state") or "") == "progress"
         or bool(checkin.get("user_reported_proof"))
@@ -443,6 +437,158 @@ def coach_reply(
         user_message=user_message,
         checkin=checkin,
     )
+
+
+def coach_reply(
+    *,
+    domain_map: dict,
+    checkin: dict,
+    messages: list[dict] | None = None,
+    user_message: str | None = None,
+    prompts: dict | None = None,
+    active_goal_context: dict | None = None,
+    user_coach_context: dict | None = None,
+    feature_flags: dict | None = None,
+) -> dict:
+    system, user_payload, messages, checkin, active_goal_context, user_coach_context = (
+        _prepare_coach_turn(
+            domain_map=domain_map,
+            checkin=checkin,
+            messages=messages,
+            user_message=user_message,
+            prompts=prompts,
+            active_goal_context=active_goal_context,
+            user_coach_context=user_coach_context,
+            feature_flags=feature_flags,
+        )
+    )
+
+    try:
+        parsed = chat_json(system, user_payload)
+        if parsed.get("assistant_message"):
+            normalized = _normalize_coach_response(parsed, domain_map, checkin)
+            return _enforce_anti_repeat_reply(
+                normalized,
+                messages=messages,
+                user_message=user_message,
+                checkin=checkin,
+            )
+    except Exception:
+        pass
+
+    # Fallback: conversational path
+    context_block = ""
+    if user_coach_context:
+        context_block += f"USER_COACH_CONTEXT:\n{json.dumps(user_coach_context, indent=2)}\n\n"
+    if active_goal_context:
+        context_block += f"ACTIVE_GOAL_CONTEXT:\n{json.dumps(active_goal_context, indent=2)}\n\n"
+    system = (
+        f"{system}\n\n"
+        f"{context_block}"
+        f"domain_map:\n{json.dumps(domain_map, indent=2)}\n\n"
+        f"checkin:\n{json.dumps(checkin, indent=2)}"
+    )
+    llm_messages = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
+    text = chat_text(system, llm_messages)
+    return _fallback_text_result(
+        text=text,
+        domain_map=domain_map,
+        checkin=checkin,
+        messages=messages,
+        user_message=user_message,
+    )
+
+
+def _emit_text_deltas(text: str, *, chunk_size: int = 28) -> Iterator[dict[str, Any]]:
+    value = text or ""
+    for i in range(0, len(value), chunk_size):
+        piece = value[i : i + chunk_size]
+        if piece:
+            yield {"type": "delta", "text": piece}
+
+
+def coach_reply_stream(
+    *,
+    domain_map: dict,
+    checkin: dict,
+    messages: list[dict] | None = None,
+    user_message: str | None = None,
+    prompts: dict | None = None,
+    active_goal_context: dict | None = None,
+    user_coach_context: dict | None = None,
+    feature_flags: dict | None = None,
+) -> Iterator[dict[str, Any]]:
+    """Generate the full coach reply first, then stream the *committed* text.
+
+    Live mid-generation tokens are not forwarded: anti-repeat / sanitize can rewrite
+    the message after the model finishes, which previously caused a jarring UI swap.
+    """
+    system, user_payload, messages, checkin, active_goal_context, user_coach_context = (
+        _prepare_coach_turn(
+            domain_map=domain_map,
+            checkin=checkin,
+            messages=messages,
+            user_message=user_message,
+            prompts=prompts,
+            active_goal_context=active_goal_context,
+            user_coach_context=user_coach_context,
+            feature_flags=feature_flags,
+        )
+    )
+
+    yield {"type": "status", "phase": "generating"}
+
+    result: dict | None = None
+    try:
+        parsed: dict | None = None
+        for event in chat_json_stream(system, user_payload):
+            # Intentionally do not yield mid-JSON deltas — they are not final.
+            if event.get("type") == "json":
+                parsed = event.get("data") if isinstance(event.get("data"), dict) else {}
+
+        if parsed and parsed.get("assistant_message"):
+            normalized = _normalize_coach_response(parsed, domain_map, checkin)
+            result = _enforce_anti_repeat_reply(
+                normalized,
+                messages=messages,
+                user_message=user_message,
+                checkin=checkin,
+            )
+    except Exception:
+        result = None
+
+    if result is None:
+        context_block = ""
+        if user_coach_context:
+            context_block += f"USER_COACH_CONTEXT:\n{json.dumps(user_coach_context, indent=2)}\n\n"
+        if active_goal_context:
+            context_block += f"ACTIVE_GOAL_CONTEXT:\n{json.dumps(active_goal_context, indent=2)}\n\n"
+        fallback_system = (
+            f"{system}\n\n"
+            f"{context_block}"
+            f"domain_map:\n{json.dumps(domain_map, indent=2)}\n\n"
+            f"checkin:\n{json.dumps(checkin, indent=2)}"
+        )
+        llm_messages = [
+            {"role": m["role"], "content": m["content"]} for m in messages if m.get("content")
+        ]
+        text = ""
+        for event in chat_text_stream(fallback_system, llm_messages):
+            if event.get("type") == "text":
+                text = str(event.get("data") or "")
+        result = _fallback_text_result(
+            text=text,
+            domain_map=domain_map,
+            checkin=checkin,
+            messages=messages,
+            user_message=user_message,
+        )
+
+    # Stream only the committed member-facing text (post anti-repeat).
+    final_text = str((result or {}).get("assistant_message") or "")
+    yield from _emit_text_deltas(final_text)
+    yield {"type": "result", "data": result or {"assistant_message": final_text}}
+
 
 
 def friction_rescue(
