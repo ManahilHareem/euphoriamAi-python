@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
     openai_model_mini: str = "gpt-4o-mini"
+    # Coach check-in only; empty falls back to openai_model. Env: COACH_OPENAI_MODEL
+    coach_openai_model: str = ""
     ai_internal_key: str = ""
     port: int = 8000
     coach_cert_deep_enabled: bool = False

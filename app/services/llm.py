@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -9,9 +11,13 @@ from openai import OpenAI
 
 from app.config import settings
 
+logger = logging.getLogger(__name__)
+
 _client: OpenAI | None = None
 
 _ASSISTANT_MSG_START = re.compile(r'"assistant_message"\s*:\s*"')
+
+COACH_MAX_COMPLETION_TOKENS = 900
 
 
 def get_client() -> OpenAI:
@@ -23,6 +29,12 @@ def get_client() -> OpenAI:
     return _client
 
 
+def resolve_coach_model(model: str | None = None) -> str:
+    if model:
+        return model
+    return (settings.coach_openai_model or "").strip() or settings.openai_model
+
+
 def chat_json(
     system: str,
     user: str,
@@ -32,8 +44,10 @@ def chat_json(
     max_completion_tokens: int = 2000,
 ) -> dict:
     client = get_client()
+    resolved_model = model or settings.openai_model
+    t0 = time.perf_counter()
     res = client.chat.completions.create(
-        model=model or settings.openai_model,
+        model=resolved_model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -41,6 +55,21 @@ def chat_json(
         response_format={"type": "json_object"},
         temperature=temperature,
         max_completion_tokens=max_completion_tokens,
+    )
+    openai_ms = int((time.perf_counter() - t0) * 1000)
+    # print (not logger.info) so timings show under default uvicorn WARNING level
+    print(
+        "llm_chat_json "
+        + json.dumps(
+            {
+                "model": resolved_model,
+                "openai_ms": openai_ms,
+                "system_chars": len(system or ""),
+                "user_chars": len(user or ""),
+                "max_completion_tokens": max_completion_tokens,
+            }
+        ),
+        flush=True,
     )
 
     raw = res.choices[0].message.content or "{}"
@@ -110,8 +139,10 @@ def chat_json_stream(
 ) -> Iterator[dict[str, Any]]:
     """Stream a JSON-object completion; yield assistant_message deltas then final parsed JSON."""
     client = get_client()
+    resolved_model = model or settings.openai_model
+    t0 = time.perf_counter()
     stream = client.chat.completions.create(
-        model=model or settings.openai_model,
+        model=resolved_model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -141,6 +172,21 @@ def chat_json_stream(
             emitted = so_far
             if piece:
                 yield {"type": "delta", "text": piece}
+
+    openai_ms = int((time.perf_counter() - t0) * 1000)
+    print(
+        "llm_chat_json_stream "
+        + json.dumps(
+            {
+                "model": resolved_model,
+                "openai_ms": openai_ms,
+                "system_chars": len(system or ""),
+                "user_chars": len(user or ""),
+                "max_completion_tokens": max_completion_tokens,
+            }
+        ),
+        flush=True,
+    )
 
     try:
         parsed = json.loads(buf or "{}")

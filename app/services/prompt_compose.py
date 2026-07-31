@@ -94,10 +94,14 @@ def compose_coach_system(prompts: dict | None, *, feature_flags: dict | None = N
             )
         )
     elif prompts.get("brain_prompt"):
+        brain_body = prompts["brain_prompt"]
+        # When RAG is enabled, never ship the full library on a miss.
+        if flags.get("brain_prompt_rag_enabled"):
+            brain_body = _truncate(brain_body, 6_000)
         parts.append(
             _section(
                 "BRAIN PROMPT (Canonical library — signatures, reps, UC routing)",
-                prompts["brain_prompt"],
+                brain_body,
             )
         )
     else:

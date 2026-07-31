@@ -31,6 +31,19 @@ class CoachPromptComposeRagTests(unittest.TestCase):
         self.assertIn("BRAIN PROMPT (Canonical library", system)
         self.assertIn("Full canonical library", system)
 
+    def test_truncates_brain_when_rag_enabled_without_chunks(self):
+        huge = "X" * 8000
+        system = compose_coach_system(
+            {
+                "coach_brain_prompt": "Goal OS",
+                "brain_prompt": huge,
+            },
+            feature_flags={"brain_prompt_rag_enabled": True},
+        )
+        self.assertIn("BRAIN PROMPT (Canonical library", system)
+        self.assertIn("section truncated", system)
+        self.assertLess(system.count("X"), 8000)
+
 
 if __name__ == "__main__":
     unittest.main()

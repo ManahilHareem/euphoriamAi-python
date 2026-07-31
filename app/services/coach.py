@@ -8,7 +8,14 @@ from app.config import merge_feature_flags
 from collections.abc import Iterator
 from typing import Any
 
-from app.services.llm import chat_json, chat_json_stream, chat_text, chat_text_stream
+from app.services.llm import (
+    COACH_MAX_COMPLETION_TOKENS,
+    chat_json,
+    chat_json_stream,
+    chat_text,
+    chat_text_stream,
+    resolve_coach_model,
+)
 from app.services.prompt_compose import compose_coach_system, compose_friction_system
 
 
@@ -282,9 +289,8 @@ def _build_coach_user_payload(
     if checkin.get("state_vector_v2"):
         payload["STATE_VECTOR_V2"] = checkin["state_vector_v2"]
     if user_coach_context:
+        # Memory lives only under USER_COACH_CONTEXT — do not duplicate at top level.
         payload["USER_COACH_CONTEXT"] = user_coach_context
-        if user_coach_context.get("COACH_MEMORY_CONTEXT"):
-            payload["COACH_MEMORY_CONTEXT"] = user_coach_context["COACH_MEMORY_CONTEXT"]
     return json.dumps(payload, indent=2)
 
 
@@ -464,7 +470,12 @@ def coach_reply(
     )
 
     try:
-        parsed = chat_json(system, user_payload)
+        parsed = chat_json(
+            system,
+            user_payload,
+            model=resolve_coach_model(),
+            max_completion_tokens=COACH_MAX_COMPLETION_TOKENS,
+        )
         if parsed.get("assistant_message"):
             normalized = _normalize_coach_response(parsed, domain_map, checkin)
             return _enforce_anti_repeat_reply(
@@ -489,7 +500,7 @@ def coach_reply(
         f"checkin:\n{json.dumps(checkin, indent=2)}"
     )
     llm_messages = [{"role": m["role"], "content": m["content"]} for m in messages if m.get("content")]
-    text = chat_text(system, llm_messages)
+    text = chat_text(system, llm_messages, model=resolve_coach_model())
     return _fallback_text_result(
         text=text,
         domain_map=domain_map,
@@ -541,7 +552,12 @@ def coach_reply_stream(
     result: dict | None = None
     try:
         parsed: dict | None = None
-        for event in chat_json_stream(system, user_payload):
+        for event in chat_json_stream(
+            system,
+            user_payload,
+            model=resolve_coach_model(),
+            max_completion_tokens=COACH_MAX_COMPLETION_TOKENS,
+        ):
             # Intentionally do not yield mid-JSON deltas — they are not final.
             if event.get("type") == "json":
                 parsed = event.get("data") if isinstance(event.get("data"), dict) else {}
@@ -573,7 +589,9 @@ def coach_reply_stream(
             {"role": m["role"], "content": m["content"]} for m in messages if m.get("content")
         ]
         text = ""
-        for event in chat_text_stream(fallback_system, llm_messages):
+        for event in chat_text_stream(
+            fallback_system, llm_messages, model=resolve_coach_model()
+        ):
             if event.get("type") == "text":
                 text = str(event.get("data") or "")
         result = _fallback_text_result(
