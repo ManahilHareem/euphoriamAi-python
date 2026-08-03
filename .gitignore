@@ -15,6 +15,11 @@ ENV/
 *.swp
 *.swo
 
+# Cursor IDE — local only, never commit or push to GitHub
+.cursor/
+.cursorignore
+.cursorrules
+
 # Environment
 .env
 .env.local
